@@ -1,0 +1,5 @@
+{"result_count": 1, "results": [{"number": "3333333333",
+ "basic": {"first_name": "MARIA", "last_name": "GARCIA", "status": "A"},
+ "taxonomies": [{"desc": "Pediatrics", "primary": true}],
+ "addresses": [{"address_purpose": "LOCATION", "address_1": "4 OAK AVE",
+   "city": "DENVER", "state": "CO", "postal_code": "80202", "telephone_number": "720-555-9999"}]}]}

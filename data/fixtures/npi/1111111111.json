@@ -1,0 +1,5 @@
+{"result_count": 1, "results": [{"number": "1111111111",
+ "basic": {"first_name": "JANE", "last_name": "SMITH", "status": "A"},
+ "taxonomies": [{"desc": "Family Medicine", "primary": true}],
+ "addresses": [{"address_purpose": "LOCATION", "address_1": "123 MAIN ST",
+   "city": "NAPLES", "state": "FL", "postal_code": "34102", "telephone_number": "239-555-9999"}]}]}

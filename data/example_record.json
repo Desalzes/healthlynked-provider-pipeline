@@ -1,0 +1,44 @@
+{
+  "example_input": {
+    "provider_id": "HL_001",
+    "provider_name": "John Smith, MD",
+    "npi": "1234567890",
+    "specialty": "Cardiology",
+    "practice_name": "ABC Heart Group",
+    "address": "100 Main St, Naples, FL 34102",
+    "phone": "239-555-1234",
+    "last_verified_date": "2023-09-01"
+  },
+  "example_output_auto_update": {
+    "provider_id": "HL_001",
+    "npi": "1234567890",
+    "change_detected": true,
+    "changes": [
+      {
+        "field": "address",
+        "old_value": "100 Main St, Naples, FL 34102",
+        "new_value": "250 Health Park Dr, Fort Myers, FL 33908",
+        "confidence_score": 0.92,
+        "supporting_sources": ["NPI Registry", "Practice Website", "State Medical Board"]
+      },
+      {
+        "field": "phone",
+        "old_value": "239-555-1234",
+        "new_value": "239-555-9000",
+        "confidence_score": 0.88,
+        "supporting_sources": ["Practice Website", "NPI Registry"]
+      }
+    ],
+    "overall_confidence": 0.90,
+    "recommended_action": "auto_update",
+    "reason": "Updated address and phone number were confirmed by multiple reliable sources."
+  },
+  "example_output_human_review": {
+    "provider_id": "HL_001",
+    "npi": "1234567890",
+    "change_detected": true,
+    "overall_confidence": 0.61,
+    "recommended_action": "human_review",
+    "reason": "Practice website and NPI Registry show different addresses. Manual verification recommended."
+  }
+}

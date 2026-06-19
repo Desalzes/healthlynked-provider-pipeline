@@ -1,0 +1,26 @@
+[project]
+name = "provider-pipeline"
+version = "0.1.0"
+description = "Deterministic-first provider-directory update pipeline (Kaggle HealthLynked submission)"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Gabriel Bland", email = "desalzes@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "litellm>=1.40",
+    "rapidfuzz>=3.9",
+    "usaddress>=0.5.10",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["provider_pipeline"]
