@@ -22,17 +22,21 @@ def main() -> None:
             "--fake-contacts` first to populate the audit log, then re-run this script."
         )
 
-    est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
-                          reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
-                          mean_tokens_per_call=400)
+    decision_est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
+                                   reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
+                                   mean_tokens_per_call=400)
+    record_est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
+                                 reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
+                                 mean_tokens_per_call=400, basis="record")
     base = llm_everywhere_baseline(summary, price_per_1k_tokens=0.0002, mean_tokens_per_call=400)
 
     # tier-split bar
     counts = summary["counts"]
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.bar(list(counts.keys()), list(counts.values()), color=["#2a9d8f", "#e9c46a", "#264653"])
-    ax.set_title(f"Routing split (n={summary['decisions_total']})  "
-                 f"inference ${est['inference_usd']:.4f}/1k vs LLM-everywhere ${base['inference_usd']:.4f}/1k")
+    ax.set_title(f"Routing split ({summary['records_total']} records / {summary['decisions_total']} decisions)  "
+                 f"inference ${record_est['inference_usd']:.4f}/1k records vs "
+                 f"LLM-everywhere ${base['inference_usd']:.4f}/1k records")
     ax.set_ylabel("decisions")
     fig.tight_layout()
     fig.savefig(OUT / "cost_telemetry.png", dpi=120)
@@ -44,7 +48,8 @@ def main() -> None:
         w.writeheader()
         w.writerows(sweep)
     print("wrote out/cost_telemetry.png and out/sensitivity.csv")
-    print("per-1k:", est)
+    print("per-1k decisions:", decision_est)
+    print("per-1k records:", record_est)
     print("baseline:", base)
 
 

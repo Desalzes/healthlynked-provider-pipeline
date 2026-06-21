@@ -56,8 +56,12 @@ class AuditLog:
             total_gated += r["gated_calls"] or 0
             total_wall += r["wall_time_ms"]
             n += 1
+        records_total = self.conn.execute(
+            "SELECT COUNT(DISTINCT provider_id) AS n FROM audit"
+        ).fetchone()["n"]
         return {
             "counts": counts,
+            "records_total": records_total,
             "decisions_total": n,
             "total_llm_tokens": total_tokens,
             "mean_llm_tokens": (total_tokens / n) if n else 0.0,

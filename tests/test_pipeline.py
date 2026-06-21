@@ -75,6 +75,66 @@ def test_snippet_fallback_auto_updates_when_board_silent(tmp_path):
     assert phone_row.gated_calls == 2
 
 
+def test_false_alarm_board_confirming_npi_is_human_review(tmp_path):
+    # Website still shows the old value, but NPI and State Medical Board agree on
+    # a new value. That is not a no-change false alarm; it needs review.
+    canon = _canon(phone="2395559999")
+    deps = _deps(canon, website=ContactTuple(phone="2395550000"),
+                 board=ContactTuple(phone="2395559999"), cache=tmp_path)
+    result, rows, _t = run_record(_rec(), deps)
+    rec = to_recommendation(result, _rec())
+    phone_row = next(r for r in rows if r.field == "phone")
+    assert phone_row.decision == "human_review"
+    assert rec.change_detected is True
+    assert rec.recommended_action == "human_review"
+    assert "disagree" in rec.reason
+
+
+def test_board_disagreement_blocks_snippet_auto_update(tmp_path):
+    # The weak snippet fallback must not outvote an authoritative board value.
+    calls = {"snippet": 0}
+
+    def snippet(_record):
+        calls["snippet"] += 1
+        return ContactTuple(phone="2395559999"), 20
+
+    canon = _canon(phone="2395559999")
+    deps = Deps(cfg=Config(), fetch_canonical=lambda npi: canon,
+                extract_website=lambda record: (ContactTuple(phone="2395559999"), 30),
+                extract_board=lambda record: (ContactTuple(phone="2395550000"), 0),
+                extract_snippet=snippet, cache_dir=tmp_path)
+    result, rows, _t = run_record(_rec(), deps)
+    rec = to_recommendation(result, _rec())
+    phone_row = next(r for r in rows if r.field == "phone")
+    assert calls["snippet"] == 0
+    assert phone_row.decision == "human_review"
+    assert rec.recommended_action == "human_review"
+    assert "State Medical Board" not in rec.changes[0].supporting_sources
+    assert "disagree" in rec.reason
+
+
+def test_stale_npi_freshness_reduces_confidence(tmp_path):
+    old_canon = _canon(phone="2395559999")
+    old_canon.fetched_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    deps = _deps(old_canon, website=ContactTuple(phone="2395559999"),
+                 board=ContactTuple(phone="2395559999"), cache=tmp_path)
+    _result, rows, _t = run_record(_rec(), deps)
+    phone_row = next(r for r in rows if r.field == "phone")
+    assert phone_row.per_source_freshness["npi"] < 0.01
+    assert phone_row.final_score < Config().auto_threshold
+    assert phone_row.decision == "human_review"
+
+
+def test_no_change_row_reports_stale_npi_freshness(tmp_path):
+    old_canon = _canon(phone="2395550000")
+    old_canon.fetched_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    deps = _deps(old_canon, cache=tmp_path)
+    _result, rows, _t = run_record(_rec(), deps)
+    phone_row = next(r for r in rows if r.field == "phone")
+    assert phone_row.decision == "no_change"
+    assert phone_row.per_source_freshness["npi"] < 0.01
+
+
 def test_is_active_flip_is_deterministic_auto_update(tmp_path):
     canon = _canon(is_active=False)
     rec, _rows, telem = run_record(_rec(is_active=True), _deps(canon, cache=tmp_path))

@@ -21,8 +21,13 @@ th{background:#264653;color:#fff;font-weight:600} tr:nth-child(even){background:
 
 def _reason_class(row: dict) -> tuple[str, str]:
     ps = row.get("per_source", {})
-    if (ps.get("npi") is not None and ps.get("website") is not None
-            and ps["npi"] != ps["website"]):
+    new_value = row.get("new_value")
+    if new_value is not None:
+        conflict = any(val is not None and val != new_value for val in ps.values())
+    else:
+        values = {val for val in ps.values() if val is not None}
+        conflict = len(values) > 1
+    if conflict:
         return "conflict", "source conflict"
     return "under", "under-corroborated"
 

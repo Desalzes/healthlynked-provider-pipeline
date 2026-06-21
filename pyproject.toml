@@ -2,9 +2,6 @@
 name = "provider-pipeline"
 version = "0.1.0"
 description = "Deterministic-first provider-directory update pipeline (Kaggle HealthLynked submission)"
-readme = "README.md"
-license = "MIT"
-authors = [{ name = "Gabriel Bland", email = "desalzes@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.6",

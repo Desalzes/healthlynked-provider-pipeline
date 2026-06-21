@@ -21,6 +21,11 @@ def test_agreement_two_unparseable_phones_do_not_agree():
     assert agreement("N/A", new="see website", old="2395550000", field="phone") == 0.0
 
 
+def test_partial_phone_is_not_a_match():
+    assert normalize_phone("555-1212") is None
+    assert agreement("555-1212", new="2395551212", old="2395550000", field="phone") == 0.0
+
+
 def test_normalize_address_lowercases_and_orders():
     a = normalize_address("123 Main St.", "Naples", "FL", "34102-1234")
     assert a.street and a.city == "naples" and a.state == "fl"

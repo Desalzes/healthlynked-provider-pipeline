@@ -47,7 +47,7 @@ def _name_parts(provider_name: str) -> tuple[str, str]:
 def _npi_payload(r: ProviderRecord, phone: str) -> dict:
     at = normalize_address_str(r.address)
     first, last = _name_parts(r.provider_name)
-    return {"result_count": 1, "results": [{"number": r.npi,
+    return {"_pipeline_fixture_fresh": True, "result_count": 1, "results": [{"number": r.npi,
             "basic": {"first_name": first.upper(), "last_name": last.upper(), "status": "A"},
             "taxonomies": [{"desc": r.specialty, "primary": True}],
             "addresses": [{"address_purpose": "LOCATION",

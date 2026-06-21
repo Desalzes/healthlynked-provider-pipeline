@@ -34,10 +34,9 @@ def _showcase() -> list[ProviderRecord]:
                        specialty="Pediatrics", practice_name="Denver Pediatric Group",
                        address="4 Oak Ave, Denver, CO 80202", phone="720-555-0000",
                        is_active=True, last_verified_date=date(2024, 3, 1)),
-        # Shaped exactly like the competition's HL_001 example: a provider who has
-        # MOVED (address + phone both change), confirmed by three authoritative
-        # sources incl. the State Medical Board -> auto_update. Feeding the sponsor's
-        # own canonical record yields the sponsor's expected output.
+        # HL_001-shaped movement scenario: same changed fields and new values, but
+        # with a demo id/NPI. SHOW-MOVE includes board corroboration for phone too,
+        # so it demonstrates the safer three-source auto-update path.
         ProviderRecord(provider_id="SHOW-MOVE", provider_name="John Smith, MD", npi="4444444444",
                        specialty="Cardiology", practice_name="ABC Heart Group",
                        address="100 Main St, Naples, FL 34102", phone="239-555-1234",

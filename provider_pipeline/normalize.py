@@ -22,15 +22,16 @@ def _clean(s: str) -> str:
 def normalize_phone(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
+    s = re.sub(r"(?:ext\.?|x)\s*\d+\s*$", "", s, flags=re.IGNORECASE)
     digits = re.sub(r"\D", "", s)
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     # Digit-less junk ("N/A", "see website") must not normalize to "" — otherwise
     # two unparseable phones would compare EQUAL and a missing number would read as
     # "verified, no change". Return None so _eq / agreement treat it as not-a-match.
-    if not digits:
+    if len(digits) != 10:
         return None
-    return digits[:10]
+    return digits
 
 
 def normalize_address(line: str, city: str, state: str, zip_: str) -> AddressTuple:

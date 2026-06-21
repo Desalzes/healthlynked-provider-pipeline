@@ -1,4 +1,4 @@
-{"result_count": 1, "results": [{"number": "3333333333",
+{"_pipeline_fixture_fresh": true, "result_count": 1, "results": [{"number": "3333333333",
  "basic": {"first_name": "MARIA", "last_name": "GARCIA", "status": "A"},
  "taxonomies": [{"desc": "Pediatrics", "primary": true}],
  "addresses": [{"address_purpose": "LOCATION", "address_1": "4 OAK AVE",

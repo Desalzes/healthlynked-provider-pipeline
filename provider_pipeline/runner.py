@@ -80,4 +80,7 @@ def run_batch(records: list[ProviderRecord], deps: Deps, log: AuditLog) -> dict:
     summary = log.summary()
     summary["recommendations"] = recommendations
     summary["errors"] = errors
+    summary["input_records_total"] = len(records)
+    summary["processed_records_total"] = len(recommendations)
+    summary["error_records_total"] = len(errors)
     return summary

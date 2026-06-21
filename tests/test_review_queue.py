@@ -31,6 +31,20 @@ def test_under_corroborated_vs_conflict_labelled():
     assert "|" not in html.split("<tbody>")[1]
 
 
+def test_board_disagreement_is_labelled_source_conflict():
+    row = _row(
+        "human_review",
+        new_value="2395559999",
+        per_source={"npi": "2395559999", "website": "2395559999", "board": "2395550000"},
+        per_source_weights={"npi": 0.45, "website": 0.35, "board": 0.20},
+        per_source_freshness={"npi": 1.0, "website": 1.0, "board": 1.0},
+    )
+
+    html = render_review_queue([row])
+
+    assert "source conflict" in html
+
+
 def test_empty_queue_message():
     html = render_review_queue([_row("auto_update")])
     assert "No records need review" in html

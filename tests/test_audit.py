@@ -47,6 +47,18 @@ def test_summary_aggregates_cost(tmp_path):
     log.close()
 
 
+def test_summary_counts_distinct_provider_records(tmp_path):
+    log = AuditLog(tmp_path / "audit.db")
+    log.write(_row("auto_update", 10))
+    log.write(_row("human_review", 20))
+    second = _row("no_change", 0, gated_calls=0)
+    second.provider_id = "P2"
+    log.write(second)
+
+    assert log.summary()["records_total"] == 2
+    log.close()
+
+
 def test_fresh_resets_existing_rows(tmp_path):
     db = tmp_path / "audit.db"
     first = AuditLog(db)

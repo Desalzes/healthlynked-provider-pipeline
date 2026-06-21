@@ -40,8 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     total = summary["decisions_total"]
     print(f"loaded={len(all_records)} stale_selected={len(records)} decisions={total} "
           f"auto={counts['auto_update']} review={counts['human_review']} "
-          f"no_change={counts['no_change']}")
-    print(f"llm_calls={summary['llm_calls']} total_tokens={summary['total_llm_tokens']} "
+          f"no_change={counts['no_change']} errors={summary['error_records_total']}")
+    print(f"llm_calls={summary['llm_calls']} gated_calls={summary['gated_calls_total']} "
+          f"total_tokens={summary['total_llm_tokens']} "
           f"mean_wall_ms={summary['mean_wall_ms']:.1f}")
 
     if args.show_examples:

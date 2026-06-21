@@ -40,7 +40,8 @@ class Deps:
     extract_website: Callable[[ProviderRecord], tuple]
     extract_snippet: Callable[[ProviderRecord], tuple]
     cache_dir: Path
-    # State Medical Board lookup: a free, deterministic public source (no LLM).
+    # State Medical Board lookup: fixture-backed prototype of a free, deterministic
+    # authoritative source (no LLM).
     # Returns (ContactTuple, 0). Defaults to "silent" so older callers/tests that
     # don't wire a board still work (the board simply contributes nothing).
     extract_board: Callable[[ProviderRecord], tuple] = lambda record: (ContactTuple(), 0)
@@ -74,12 +75,21 @@ def _eq(a: Optional[str], b: Optional[str], field: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
-def _emit_no_change(record, field, existing, npi_val, now, tokens=0, gated_calls=0):
+def _age_days(observed_at: Optional[datetime], now: datetime) -> float:
+    if observed_at is None:
+        return 0.0
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - observed_at).total_seconds() / 86400.0)
+
+
+def _emit_no_change(record, field, existing, npi_val, now, tokens=0, gated_calls=0,
+                    npi_freshness: float = 1.0):
     fc = FieldDecision(field=field, old_value=existing, new_value=None,
                        confidence=0.0, decision="no_change", per_source={"npi": npi_val})
     row = AuditRow(provider_id=record.provider_id, field=field, old_value=existing,
                    new_value=None, per_source={"npi": npi_val},
-                   per_source_weights={"npi": 0.45}, per_source_freshness={"npi": 1.0},
+                   per_source_weights={"npi": 0.45}, per_source_freshness={"npi": npi_freshness},
                    final_score=0.0, decision="no_change", llm_tokens=tokens,
                    gated_calls=gated_calls, wall_time_ms=0, timestamp=now)
     return fc, row
@@ -93,6 +103,8 @@ def run_record(record: ProviderRecord, deps: Deps):
     total_tokens = 0
     started = time.perf_counter()
     now = datetime.now(timezone.utc)
+    npi_age = _age_days(canonical.fetched_at, now) if canonical else 0.0
+    npi_freshness = freshness(npi_age, cfg.half_lives["npi"]) if canonical else 1.0
 
     # Extract each paid LLM source at most ONCE per record — the website page and
     # the search snippets are the same for every field, so a second field reuses the
@@ -119,7 +131,7 @@ def run_record(record: ProviderRecord, deps: Deps):
             provider_id=record.provider_id, field="is_active",
             old_value=str(record.is_active), new_value=str(canonical.is_active),
             per_source={"npi": str(canonical.is_active)},
-            per_source_weights={"npi": 1.0}, per_source_freshness={"npi": 1.0},
+            per_source_weights={"npi": 1.0}, per_source_freshness={"npi": npi_freshness},
             final_score=1.0, decision="auto_update", llm_tokens=0,
             wall_time_ms=0, timestamp=now))
 
@@ -129,7 +141,9 @@ def run_record(record: ProviderRecord, deps: Deps):
 
         # Stage 3: NPI agrees with record -> no_change, $0
         if npi_val is not None and _eq(npi_val, existing, field):
-            fc, row = _emit_no_change(record, field, existing, npi_val, now)
+            fc, row = _emit_no_change(
+                record, field, existing, npi_val, now, npi_freshness=npi_freshness
+            )
             changes.append(fc); rows.append(row); continue
 
         # Stage 4 (website LLM, gated): candidate change OR NPI silent. Memoized per
@@ -145,18 +159,14 @@ def run_record(record: ProviderRecord, deps: Deps):
 
         # Stage 5: cross-source routing
         case = cross_source(npi_val, website_val, existing, field)
-        if case == "false_alarm":
-            fc, row = _emit_no_change(record, field, existing, npi_val, now,
-                                      tokens=tok_w, gated_calls=gated)
-            changes.append(fc); rows.append(row); continue
-
-        # Stage 2b: State Medical Board — a free, deterministic authoritative source,
-        # observed alongside NPI and website for every candidate change ($0, no LLM).
+        # Stage 2b: State Medical Board — fixture-backed prototype of a free,
+        # deterministic authoritative source, observed alongside NPI and website
+        # for every candidate change ($0, no LLM).
         board_contact, _tok_b = deps.extract_board(record)
         board_val = _contact_field(board_contact, field)
         obs = [
             SourceObservation(source="npi", field=field, value=npi_val,
-                              freshness=freshness(0, cfg.half_lives["npi"]), observed_at=now),
+                              freshness=npi_freshness, observed_at=now),
             SourceObservation(source="website", field=field, value=website_val,
                               freshness=freshness(0, cfg.half_lives["website"]), observed_at=now),
             SourceObservation(source="board", field=field, value=board_val,
@@ -165,10 +175,21 @@ def run_record(record: ProviderRecord, deps: Deps):
         s = score(obs, new=new_value, old=existing, field=field, cfg=cfg)
         tokens = tok_w
         per_source = {"npi": npi_val, "website": website_val, "board": board_val}
+        board_agrees_existing = _eq(board_val, existing, field)
+        board_disagrees_with_new = board_val is not None and not _eq(board_val, new_value, field)
+
+        if case == "false_alarm" and (board_val is None or board_agrees_existing):
+            fc, row = _emit_no_change(record, field, existing, npi_val, now,
+                                      tokens=tok_w, gated_calls=gated)
+            fc.per_source = per_source
+            row.per_source = per_source
+            row.per_source_weights = {o.source: cfg.source_weights[o.source] for o in obs}
+            row.per_source_freshness = {o.source: o.freshness for o in obs}
+            changes.append(fc); rows.append(row); continue
 
         # Stage 6 (snippet LLM, gated): only if still below auto and not conflict —
         # i.e. the authoritative board was silent and a third confirmation is needed.
-        if case != "conflict" and s < cfg.auto_threshold:
+        if case != "conflict" and board_val is None and s < cfg.auto_threshold:
             snippet_contact, tok_s, snip_new = _gated("snippet", deps.extract_snippet)
             tokens += tok_s; gated += 1 if snip_new else 0
             snippet_val = _contact_field(snippet_contact, field)
@@ -177,7 +198,7 @@ def run_record(record: ProviderRecord, deps: Deps):
             per_source["snippet"] = snippet_val
             s = score(obs, new=new_value, old=existing, field=field, cfg=cfg)
 
-        decision = "human_review" if case == "conflict" else route(s, cfg)
+        decision = "human_review" if case == "conflict" or board_disagrees_with_new else route(s, cfg)
         weights = {o.source: cfg.source_weights[o.source] for o in obs}
         fresh = {o.source: o.freshness for o in obs}
         changes.append(FieldDecision(field=field, old_value=existing, new_value=new_value,
@@ -205,7 +226,7 @@ def _join_fields(changes) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _reason(action: str, changes) -> str:
+def _reason(action: str, changes, has_source_conflict: bool = False) -> str:
     if action == "no_change":
         return "All checked fields match the NPI Registry; no update needed."
     fields = _join_fields(changes)
@@ -213,10 +234,17 @@ def _reason(action: str, changes) -> str:
         return f"Updated {fields} confirmed by multiple reliable sources."
     # human_review splits two ways: sources that agree but fall short of the
     # auto-update corroboration bar, vs. sources that genuinely disagree.
-    if changes and all(len(c.supporting_sources) >= 2 for c in changes):
+    if not has_source_conflict and changes and all(len(c.supporting_sources) >= 2 for c in changes):
         return (f"Sources agree on {fields} but corroboration is below the "
                 f"auto-update threshold; manual confirmation recommended.")
     return f"Sources disagree on {fields}; manual verification recommended."
+
+
+def _has_source_conflict(change: FieldDecision) -> bool:
+    if change.new_value is None:
+        return False
+    return any(val is not None and not _eq(val, change.new_value, change.field)
+               for val in change.per_source.values())
 
 
 def _raw_field(record, field):
@@ -246,9 +274,11 @@ def _display(value, field):
 
 def to_recommendation(result: RecordResult, record: ProviderRecord) -> ChangeRecommendation:
     sponsor_changes = []
+    has_source_conflict = False
     for c in result.changes:
         if c.decision == "no_change":
             continue
+        has_source_conflict = has_source_conflict or _has_source_conflict(c)
         supporting = [SOURCE_DISPLAY.get(src, src)
                       for src, val in c.per_source.items()
                       if _eq(val, c.new_value, c.field)]
@@ -274,4 +304,4 @@ def to_recommendation(result: RecordResult, record: ProviderRecord) -> ChangeRec
         provider_id=result.provider_id, npi=result.npi,
         change_detected=change_detected, changes=sponsor_changes,
         overall_confidence=overall, recommended_action=action,
-        reason=_reason(action, sponsor_changes))
+        reason=_reason(action, sponsor_changes, has_source_conflict))

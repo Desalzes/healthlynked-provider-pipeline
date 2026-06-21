@@ -1,6 +1,6 @@
 """Golden test: locks the exact numbers WRITEUP.md cites against the committed
 corpus, so the writeup's headline figures cannot silently drift. Runs the bundled
-53-record synthetic set through the offline (fake-contacts) path.
+54-record synthetic set through the offline (fake-contacts) path.
 """
 import json
 from pathlib import Path
@@ -42,6 +42,9 @@ def test_per_1k_cost_reconciles_decisions_and_records(tmp_path):
     est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
                           reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
                           mean_tokens_per_call=400)
+    record_est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
+                                 reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
+                                 mean_tokens_per_call=400, basis="record")
     # The tool reports per-1,000-DECISIONS: 83.3 reviews -> $125.00 (WRITEUP table note).
     assert est["reviews_per_1k"] == 83.3
     assert abs(est["review_usd"] - 125.0) < 1e-4
@@ -50,3 +53,7 @@ def test_per_1k_cost_reconciles_decisions_and_records(tmp_path):
     assert round(est["review_usd"] * 2) == 250
     # Gated inference is measured from the real call count, not a hand-picked fraction.
     assert est["gated_calls_per_1k"] == 222.2
+    assert summary["records_total"] == 54
+    assert record_est["gated_calls_per_1k"] == 444.4
+    assert abs(record_est["inference_usd"] - 0.035556) < 1e-6
+    assert round(record_est["review_usd"]) == 250

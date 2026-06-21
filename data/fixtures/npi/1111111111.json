@@ -1,4 +1,4 @@
-{"result_count": 1, "results": [{"number": "1111111111",
+{"_pipeline_fixture_fresh": true, "result_count": 1, "results": [{"number": "1111111111",
  "basic": {"first_name": "JANE", "last_name": "SMITH", "status": "A"},
  "taxonomies": [{"desc": "Family Medicine", "primary": true}],
  "addresses": [{"address_purpose": "LOCATION", "address_1": "123 MAIN ST",

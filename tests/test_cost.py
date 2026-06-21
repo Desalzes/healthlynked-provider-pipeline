@@ -4,6 +4,7 @@ from provider_pipeline.cost import per_1k_estimate, llm_everywhere_baseline, swe
 
 def test_per_1k_scales_inference_and_review():
     summary = {"decisions_total": 100, "total_llm_tokens": 5000,
+               "records_total": 50,
                "counts": {"auto_update": 10, "human_review": 5, "no_change": 85},
                "llm_calls": 15}
     est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
@@ -13,6 +14,22 @@ def test_per_1k_scales_inference_and_review():
     # reviewers: 5 reviews -> 50 per 1k -> 50 * 3 min = 150 min -> 2.5 h * $30 = $75
     assert abs(est["review_usd"] - 75.0) < 1e-6
     assert est["total_usd"] > est["inference_usd"]
+
+
+def test_per_1k_can_report_record_basis():
+    summary = {"decisions_total": 100, "records_total": 50, "total_llm_tokens": 5000,
+               "gated_calls_total": 20,
+               "counts": {"auto_update": 10, "human_review": 5, "no_change": 85},
+               "llm_calls": 15}
+    est = per_1k_estimate(summary, price_per_1k_tokens=0.0002,
+                          reviewer_minutes_each=3.0, reviewer_rate_per_hour=30.0,
+                          basis="record")
+
+    assert est["basis"] == "record"
+    assert est["denominator"] == 50
+    assert est["gated_calls_per_1k"] == 400.0
+    assert abs(est["inference_usd"] - 0.02) < 1e-6
+    assert abs(est["review_usd"] - 150.0) < 1e-6
 
 
 def test_llm_everywhere_costs_more():

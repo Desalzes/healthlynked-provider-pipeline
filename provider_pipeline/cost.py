@@ -7,21 +7,28 @@ from .confidence import route
 
 def per_1k_estimate(summary: dict, *, price_per_1k_tokens: float,
                     reviewer_minutes_each: float, reviewer_rate_per_hour: float,
-                    mean_tokens_per_call: int = 400) -> dict:
-    n = summary["decisions_total"] or 1
+                    mean_tokens_per_call: int = 400,
+                    basis: str = "decision") -> dict:
+    if basis not in {"decision", "record"}:
+        raise ValueError("basis must be 'decision' or 'record'")
+    if basis == "record":
+        n = summary.get("records_total") or summary["decisions_total"] or 1
+    else:
+        n = summary["decisions_total"] or 1
     scale = 1000.0 / n
     gated_calls_per_1k = summary.get("gated_calls_total", 0) * scale
     observed_tokens_per_1k = summary["total_llm_tokens"] * scale
-    # Inference is driven by the MEASURED count of gated LLM-stage calls (website +
-    # snippet). A live run records real token usage and we use that; the offline
-    # demo spends $0, so we estimate from the measured call count x mean tokens/call
-    # rather than a hand-picked fraction — the cost number is measured, not modeled.
+    # Inference dollars are modeled from the MEASURED count of gated LLM-stage calls
+    # (website + snippet). A non-fake LLM run records real token usage and we use
+    # that; the offline demo spends $0, so we estimate from measured gated calls x
+    # mean tokens/call rather than a hand-picked fraction.
     modeled_tokens_per_1k = gated_calls_per_1k * mean_tokens_per_call
     tokens_per_1k = observed_tokens_per_1k if observed_tokens_per_1k > 0 else modeled_tokens_per_1k
     reviews_per_1k = summary["counts"]["human_review"] * scale
     inference = (tokens_per_1k / 1000.0) * price_per_1k_tokens
     review = (reviews_per_1k * reviewer_minutes_each / 60.0) * reviewer_rate_per_hour
-    return {"inference_usd": round(inference, 6), "review_usd": round(review, 4),
+    return {"basis": basis, "denominator": n,
+            "inference_usd": round(inference, 6), "review_usd": round(review, 4),
             "total_usd": round(inference + review, 4),
             "tokens_per_1k": round(tokens_per_1k, 1),
             "gated_calls_per_1k": round(gated_calls_per_1k, 1),

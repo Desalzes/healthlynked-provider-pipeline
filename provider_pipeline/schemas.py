@@ -97,3 +97,19 @@ class AuditRow(BaseModel):
     gated_calls: int = 0   # number of paid LLM extraction stages invoked (website + snippet)
     wall_time_ms: int
     timestamp: datetime
+
+
+MergeAction = Literal["auto_merge", "human_review", "no_merge"]
+
+
+class DuplicateCandidate(BaseModel):
+    """A duplicate/merge recommendation — kept SEPARATE from field-change output so
+    it never collides with the sponsor's ChangeRecommendation contract. Same NPI =>
+    same provider (auto_merge); distinct NPIs that merely share name+location are
+    held for human review and never auto-merged."""
+    provider_ids: list[str]
+    candidate_type: Literal["provider", "practice"] = "provider"
+    matched_keys: list[str]
+    score_components: dict[str, float]
+    merge_action: MergeAction
+    reason: str
