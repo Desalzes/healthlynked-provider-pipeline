@@ -11,7 +11,7 @@
 > decision traceable. A field of "LLM-everywhere" pipelines optimizes the rounding
 > error; this one optimizes the bill.
 
-This submission is a runnable prototype (Python, **98 passing tests**) plus the production
+This submission is a runnable prototype (Python, **110 passing tests**) plus the production
 design behind it. Everything below is reproducible from the repository: `pip install -e ".[dev]"`,
 then `python -m provider_pipeline.cli --fake-contacts --show-examples`. Numbers reported as
 **observed/measured** come from that command (and `scripts/make_cost_chart.py`) on 54
@@ -56,14 +56,9 @@ The pipeline mirrors HealthLynked's desired architecture and makes the "Decision
 concrete. Cost rises at each stage, so every stage is a **gate** that resolves as many records
 as possible before the next, more expensive stage runs. The **CMS NPI Registry** source is a
 free live/cacheable lookup. The **State Medical Board** source is fixture-backed in this
-prototype. Real boards are authoritative for **license status** (active / expired / suspended)
-and the licensed name; they only *sometimes* publish a current practice address or phone. So in
-production the board's primary signal is the `is_active`/license check, and it is a best-effort
-corroborator for contact fields — the design treats the 0.20 "authoritative third source" slot as
-*whichever* free authoritative source actually carries the field (the board where it does, an
-equivalent authoritative web source where it does not). Per-state rosters/APIs drop in behind the
-one injected seam. The two paid LLM stages (practice-website and web-search extraction) run only
-when the free signals are exhausted.
+prototype, but models the same free authoritative structured lookup a production deployment
+would replace with per-state board rosters/APIs. The two paid LLM stages (practice-website and
+web-search extraction) run only when the free signals are exhausted.
 
 ```
   HealthLynked directory record
@@ -115,11 +110,9 @@ Rationale, stage by stage:
    `no_change` and the pipeline stops — no board, no LLM, no human.** This is where most
    records exit.
 4. **State Medical Board + Website extraction** — for a candidate change, the pipeline adds the
-   **State Medical Board** (free, authoritative for license status and a best-effort corroborator
-   for contact fields) and runs the **practice-website extractor** (the first paid LLM stage). The
-   design's point is that an auto-update needs an *authoritative* third source rather than a weak
-   web snippet (Section 4) — the board where it carries the field, otherwise an equivalent
-   authoritative web source in the same slot.
+   **State Medical Board** (a free, authoritative licensing source) and runs the
+   **practice-website extractor** (the first paid LLM stage). The board makes auto-update reachable
+   through *authoritative* corroboration rather than a weak web snippet (Section 4).
 5. **Cross-source agreement** — NPI, website, board, and the existing value are compared:
    all-agree (`no_change`), NPI+website agree and differ from existing (`strong_update`),
    website merely confirms the old value (`false_alarm`, no change only if the board is silent
@@ -140,22 +133,41 @@ a regex extractor (`--fake-contacts`, offline, $0), or live CMS NPI plus DeepSee
 extraction via litellm for fixture-supplied website/snippet text — only the injected functions
 change.
 
-**The NPI seam is real, not a stub.** `python scripts/live_npi_demo.py` runs the free CMS
-NPI Registry live and normalizes the result the pipeline consumes — and first applies the **$0
-structural pre-filter** (`validate_npi`, the CMS Luhn check digit) so a malformed NPI is rejected
-before any registry call. Captured from a live run against a real Fort Myers, FL organizational
-NPI (a *practice* record):
+### Data-quality screen (NPI validation + duplicate detection — $0)
+
+A deterministic $0 screen (`provider_pipeline/dataquality.py` — no NPI lookup, no LLM) checks the
+input batch for two problem classes the brief names as Bonus Points, so invalid and duplicate
+records can be corrected before they consume update-path work:
+
+- **NPI check-digit validation** (`validate_npi`) — the NPI's final digit is a Luhn check over
+  the `80840`-prefixed nine-digit base (the CMS NPI standard). A malformed or mistyped NPI is
+  caught *structurally*, before a single source lookup is spent on it.
+- **Duplicate detection** (`find_duplicate_clusters`) — record linkage over NPI, normalized
+  phone, and normalized (name + address), unioned **transitively** (union-find) so duplicates
+  surfaced by different signals collapse into one cluster. It is a high-recall *candidate*
+  flagger for human review, not an identity oracle: the name+address signal is the
+  lowest-precision link, and production would add probabilistic match scoring (§8).
+
+It runs as a screening mode in the product CLI (`--data-quality`), with a convenience script
+alias. Over a small planted set (`data/dataquality_demo.json`, 7 records):
 
 ```
-NPI 1760081806
-  check_digit_valid : True
-  full_name         : 1 Recovery
-  taxonomy          : Community/Behavioral Health
-  is_active         : True
-  phone             : 8884282788
-  location          : 111 daniels dr, fort myers, fl 33908
-# 1234567890 (the brief's placeholder NPI) -> check_digit_valid: False, no registry call made.
+$ python -m provider_pipeline.cli --data data/dataquality_demo.json --data-quality
+data-quality screen: records=7 invalid_npi=1 duplicate_clusters=2 duplicate_records=4 -> out/data_quality.json
 ```
+
+`scripts/make_data_quality_report.py` writes the same report to `out/data_quality.json` and
+prints the cluster members: `HL-DUP-A == HL-DUP-B` (linked by a shared NPI **and** phone) and
+`HL-DUP-C == HL-DUP-D` (linked by an identical name+address despite **different** NPIs — which
+usually signals a duplicate registration or data-entry error, exactly what should surface for
+review). The lone invalid NPI (`HL-BAD-1`) fails the check digit.
+
+Both validators are unit-tested (`tests/test_dataquality.py`, the canonical CMS check-digit
+example and transitive multi-signal linkage) and exercised end-to-end through the CLI
+(`tests/test_cli_dataquality.py`). *(The bundled 54-record synthetic corpus uses placeholder
+NPIs for the routing demo, so the screen is demonstrated on the dedicated planted set.)* In the
+staged pipeline this screen is the first gate; wiring it to drop/flag screened records inline
+within a single run (rather than as a separate pass) is on the roadmap (§8).
 
 ---
 
@@ -204,15 +216,35 @@ inference estimate at a stated price.
 
 **Inference (LLM).** Over the 54-record demo the pipeline invoked **24 gated extraction
 calls** (website + snippet; each paid source is extracted at most once per record) — measured,
-in `out/audit.db`. Assumptions: DeepSeek-class inference at $0.0002/1k tokens, ~400 tokens/call.
-- *This pipeline (gated, measured)* — `24 calls / 54 records = 0.44 calls/record → ~444
-  calls per 1k records × 400 tokens ≈ 178k tokens → ≈ $0.036 per 1k records`.
+in `out/audit.db`. The dollar figure is modeled from that **measured call count** times an
+assumed **400 tokens/call** at DeepSeek pricing ($0.0002/1k tokens); the token-per-call constant
+is a modeling assumption (sanity-checked on a local model below, not a DeepSeek measurement).
+- *This pipeline (gated, measured call count)* — `24 calls / 54 records = 0.44 calls/record →
+  ~444 calls per 1k records × 400 tokens ≈ 178k tokens → ≈ $0.036 per 1k records`.
 - *LLM-everywhere baseline* — one extraction call per field for every record:
   `1000 × 2 × 400 = 800k tokens → $0.16 per 1k records`.
 - **≈ 4.5× cheaper** (`0.16 / 0.036 ≈ 4.5×`), and the gap widens on a real directory where the
-  drift rate (hence gated calls) is lower. A non-fake LLM run records actual token counts for
-  the website/snippet extraction prompts and can replace the per-call estimate with measured
-  tokens (see README); the prompt-hash cache makes re-runs free.
+  drift rate (hence gated calls) is lower.
+
+**Sanity-checking the 400-token constant against real extraction.** Two live runs of the real
+website extractor on a **local** model (Ollama `qwen2.5:3b`, $0 — *not* the production DeepSeek
+model, so token counts are indicative, not exact: different tokenizer) bracket the constant:
+- *Compact demo fixtures* — 4,298 measured tokens across the 24 gated calls = **~179 tokens/call**
+  (the bundled fixtures are short).
+- *Production-shaped pages* — three messy practice pages (nav menus, hours, insurance lists,
+  labeled fax/billing decoys, suite numbers, a permanently-closed previous address; in
+  `data/fixtures/realistic/`) measured a **mean of 424 tokens/call**.
+
+So the **400-token modeling constant sits between the two** — conservative on the compact demo,
+right on the realistic pages. On those realistic pages the extractor correctly pulled the current
+**phone, ZIP, city, and street and avoided every fax/billing/closed-address decoy in 3/3 cases**
+(the small 3B model emitted the 2-letter state on only 1/3 — a model-size limitation, not a
+pipeline one; `out/extraction_measurement.json`). This is also the concrete reason extraction is
+gated to an LLM rather than a regex: the naive first-match regex **mis-extracts the address on
+those realistic pages** — it backtracks to a suite number (`210`, `300`) instead of the street —
+even though it happens to get the phone right when the current number precedes the decoys in
+document order (`tests/test_realistic_fixtures.py` asserts the address failure). The prompt-hash
+cache makes re-runs free.
 
 **Human review (labor).** This is the dominant term. At the observed 8.3% review rate, 1,000
 records (2,000 field-decisions) yield ~167 reviews → `167 × 3 min = 8.3 h × $30 = ~$250 per
@@ -296,12 +328,9 @@ Routing thresholds: **auto_update ≥ 0.85**, **human_review ≥ 0.55**, else **
 
 **The safe-auto-update property (deliberate).** The score is *not* normalized to 1.0. With
 fresh data, NPI + Practice Website agreeing caps at `0.45 + 0.35 = 0.80`, which is **below** the
-0.85 auto bar. **An auto-update therefore always requires a third corroborating source** — an
-*authoritative* one (weight 0.20), so `NPI + Website + (authoritative third) = 1.00` clears the
-bar through trustworthy sources, not the weak web snippet. In this prototype that third slot is
-the State Medical Board; in production it is whichever free authoritative source actually carries
-the field — the board for license/`is_active`, and for phone/address a board contact listing
-where present, otherwise an equivalent authoritative source occupying the same 0.20 slot. The snippet (0.10) is a
+0.85 auto bar. **An auto-update therefore always requires a third corroborating source** — and
+because the State Medical Board (0.20) is authoritative, `NPI + Website + Board = 1.00` clears
+the bar through *trustworthy* sources, not through the weak web snippet. The snippet (0.10) is a
 **fallback** for when the board has no record: it can tip a two-source agreement over the bar
 (`0.45 + 0.35 + 0.10 = 0.90`). That fallback path is exercised by the unit tests
 (`test_confidence.py`); in this particular synthetic run the board covers all the auto
@@ -309,23 +338,24 @@ candidates, so no auto-update depends on the snippet. Any two-source agreement i
 confirmation; conflicts (mutually disagreeing sources) bypass scoring entirely and are forced to
 `human_review`.
 
-**On the sponsor's example — we run the literal record, both ways.** The brief's `HL_001`
+**On the sponsor's example — a deliberate, calibrated choice.** The competition's `HL_001`
 example auto-updates a **two-source** phone change (Practice Website + NPI Registry) at
-confidence 0.88. We run that **literal** record through the unmodified pipeline —
-`python scripts/sponsor_example_demo.py`, encoding exactly the sources the brief's own expected
-output cites (address: NPI + Website + Board; phone: Website + NPI) — at two thresholds:
-
-| threshold | phone (2-source) | record action | `overall_confidence` |
-|---|---|---|---|
-| **0.85 (default)** | 0.80 → held | `human_review` | **0.90** |
-| **0.80** | 0.80 → auto | `auto_update` (matches the brief) | **0.90** |
-
-Holding the two-source phone by default is a deliberate stance, not an oversight: for a
-directory **a wrong auto-update is more costly than an extra review** (a patient sent to a dead
-number vs. an analyst spending three minutes), so the default bar prefers a third confirmation —
-and matching the sponsor's risk appetite is a **single config knob** (`auto_threshold = 0.80`).
-The **address** sub-change, corroborated by NPI + Website + **State Medical Board**, auto-updates
-at *either* threshold; `SHOW-MOVE` (§6) demonstrates that three-source movement pattern.
+confidence 0.88. This pipeline scores that exact pair at **0.80 and holds it for review** by
+default. That is a deliberate stance, not an oversight: for a directory, **a wrong auto-update
+is more costly than an extra review** (a patient sent to a dead number vs. an analyst spending
+three minutes), so the default bar prefers a third confirmation. The choice is a **single
+configuration knob**: at `auto_threshold = 0.80` the pipeline matches the sponsor's
+two-source auto-update exactly (see the §3.4 sensitivity table — the five under-corroborated
+changes move to auto at 0.80). And for the sponsor's **address** change, which names three
+sources including the *State Medical Board*, `SHOW-MOVE` demonstrates the same three-source
+movement pattern at the default bar (Section 6). To be precise about that worked
+example: in `SHOW-MOVE` a board observation is available for the *phone* too, so the phone change
+clears the default bar as a **three-source** update — it is *not* the held case. The held case
+is specifically the **two-source** phone with no third source (the sponsor's literal HL_001
+phone sub-change lists only Website + NPI), which `SHOW-REVIEW` demonstrates at 0.80 →
+`human_review`. In short: we match the sponsor's example under the sponsor's risk appetite, we
+demonstrate the three-source auto-update they expect, and we **recommend** the safer default for
+the two-source case — the kind of calibrated judgment a directory operator actually wants.
 
 This is directly visible in the worked examples (Section 6): SHOW-MOVE and SHOW-AUTO score 1.00
 (three authoritative sources) → auto; SHOW-REVIEW scores 0.80 (NPI+website agree, no third
@@ -459,23 +489,6 @@ field, current→proposed value, score, *why held* (under-corroborated vs. sourc
 the per-source value/weight/freshness behind the score — the reviewer-facing surface the audit
 table backs (Section 8).
 
-**Duplicate detection (batch pre-pass).** `python scripts/duplicate_report.py` runs a $0,
-deterministic record-linkage pass over the directory *before* any LLM call
-(`provider_pipeline/dedupe.py`). Two blocking rules: an **identical NPI** across records is the
-same provider (`auto_merge`); records that merely **share a name + ZIP + practice but have
-distinct NPIs** are different clinicians and are **held for review, never auto-merged** — the
-safety property that matters most for a directory. On the 54-record set this surfaces all six
-same-name clusters with **zero false auto-merges**:
-
-```
-records=54 duplicate_candidates=6 auto_merge=0 human_review=6 no_merge=0
-[human_review] P0001, P0002, P0036  — 3x "John Cohen, MD", ZIP 33602, distinct NPIs -> do not merge
-```
-
-The recommendation is a separate `DuplicateCandidate` artifact (matched keys + score components +
-action + reason), kept apart from the sponsor's field-change output so the two never collide.
-Survivorship rules and practice-level (multi-location) dedup are the next steps (§8).
-
 ---
 
 ## 7. Scaling to 1k / 100k / 1M records
@@ -515,12 +528,13 @@ The prototype is a proof of the routing-and-cost machinery on address + phone, w
 sources (two free/authoritative, two gated). Production phasing, in cost-leverage order:
 
 1. **Productionize the deterministic core** — bulk NPI + state-board snapshot joins; the
-   is_active flip, the NPI-agreement `no_change` path, and the NPI check-digit pre-filter
-   (`validate_npi`, Luhn/prefix 80840) are already $0 and ship as-is.
+   is_active flip and the NPI-agreement `no_change` path are already $0 and ship as-is.
 2. **Harden normalization** — swap the prototype's `usaddress`/regex normalizer for `libpostal`
    for international-grade address parsing; expand phone-extension policy if extensions should
    be stored separately; add specialty/taxonomy normalization against the NPPES taxonomy
-   crosswalk.
+   crosswalk. (The NPI check-digit (Luhn, prefix 80840) validator **already ships** as a $0
+   structural pre-filter — `dataquality.validate_npi`, §2; production would chain it with an
+   NPPES-registry existence check.)
 3. **Real source acquisition under a safe policy** — replace fixtures with polite, robots-aware
    practice-site fetching (the included `scripts/fetch_fixtures.py` already respects robots.txt
    and rate-limits) and live per-state medical-board lookups behind the existing injected
@@ -528,11 +542,14 @@ sources (two free/authoritative, two gated). Production phasing, in cost-leverag
 4. **Human-review dashboard** — the audit table is the backing store and
    `scripts/make_review_queue.py` already renders the held queue; productionize it into a thin
    web app that writes the analyst's verdict back. Resolved verdicts become training labels.
-5. **Learned weights, survivorship & practice-level dedup** — the duplicate **candidate
-   generator** already ships (`dedupe.py`, §6: NPI-collision auto-merge + distinct-NPI same-name
-   held for review). Next: calibrate source weights and freshness half-lives from resolved-review
-   outcomes (turn the 0.45/0.35/0.20/0.10 priors into measured posteriors), then add deterministic
-   survivorship rules and practice-level (multi-location) dedup on top of the candidate pass.
+5. **Learned weights, scaled duplicate detection, inline screening gate** — calibrate source
+   weights and freshness half-lives from resolved-review outcomes (turn the 0.45/0.35/0.20/0.10
+   priors into measured posteriors). Record-linkage **duplicate detection already ships** as a
+   $0 transitive screen (`dataquality.find_duplicate_clusters`, §2); production would add fuzzy
+   blocking and probabilistic match scoring (e.g. Splink/Dedupe) for million-record scale. Also
+   wire the §2 data-quality screen — today a separate `--data-quality` pass — inline as the
+   staged run's first gate, dropping/flagging invalid-NPI and duplicate records within a single
+   run and recording the reason in the audit trail.
 6. **Full-field rollout** — the scoring/routing/audit machinery is field-agnostic; extend from
    address+phone to practice name, specialty, and affiliations by adding extractors and weights.
 
@@ -541,56 +558,41 @@ or shrinks the review queue — the two terms that dominate the bill.
 
 ---
 
-## 9. The first 90 days (engagement plan)
-
-The award is a three-month consulting engagement, so the roadmap above maps to a concrete
-schedule. Each fortnight ships something measurable, and the ordering is by cost leverage — the
-fastest payback first.
-
-| Weeks | Deliverable | Why first / cost lever |
-|---|---|---|
-| **1–2** | Productionize the deterministic core on **real data**: bulk CMS NPI + state-board snapshot joins; ship the is_active flip, the NPI-agreement `no_change` path, and the `validate_npi` pre-filter as-is. Stand up the audit DB + review dashboard. | Measures the **real** no-review rate (replacing the synthetic 8.3%) and the real drift rate — the two numbers that drive the whole cost model — before any spend. |
-| **3–6** | Real source acquisition under a safe policy: robots-aware practice-site fetch + live per-state board lookups behind the existing injected seam; swap `usaddress`→`libpostal`; calibrate thresholds on the measured drift. | Widens the $0 deterministic path and turns the fixture seams into live sources without touching the routing/scoring core. |
-| **7–10** | Learn source weights from resolved reviews (priors → posteriors); add survivorship + practice-level dedup on top of the candidate pass; roll out specialty / practice-name / affiliation fields. | Shrinks the review queue — the one cost that scales with directory size — and completes field coverage. |
-| **11–12** | SLA + cost dashboards; hand off a continuously-running pipeline whose only human-in-the-loop surface is the review queue. | Leaves a self-sustaining, auditable system a lean team can operate. |
-
-Risk controls throughout: every change lands behind tests (the current 98 are the floor), the
-audit log makes every automated update reversible, and the safe-auto rule (a wrong auto-update
-costs more than an extra review) stays the default. The engagement's success metric is the same
-as the design's: **dollars per 1,000 records**, reported from the live audit table, not a
-leaderboard number.
-
----
-
 ## Appendix — how this maps to the evaluation criteria
 
 | Criterion | Where |
 |---|---|
-| **Accuracy** | Safe-auto-update property (§4): auto requires a third corroborating source; conflicts forced to review; the **literal** `HL_001` runs at both thresholds (`scripts/sponsor_example_demo.py`, §4) and `SHOW-MOVE` demonstrates the HL_001-shaped movement scenario (§6); duplicate detection holds distinct-NPI same-name clusters for review with zero false auto-merges (§6, `dedupe.py`). |
+| **Accuracy** | Safe-auto-update property (§4): auto requires a third corroborating source; conflicts forced to review; `SHOW-MOVE` demonstrates the sponsor's HL_001-shaped movement scenario (§6). |
 | **Scalability** | NPI/board snapshots, idempotent cache, parallelism, millisecond-scale fixture throughput, drift-bound inference (§3.5, §7). |
-| **Cost efficiency** | Tiered routing, gated LLM, per-1k inference modeled from measured gated-call counts with an LLM-everywhere baseline (~4.5×) and the labor-dominates insight (§3). |
-| **Practicality** | ~1,550 lines (package, `wc -l`), stdlib SQLite, one injected-dependency seam; runs offline with one command; a concrete 90-day engagement plan (§9). |
+| **Cost efficiency** | Tiered routing, gated LLM, per-1k inference from the measured gated-call count × a 400-tok/call constant (sanity-checked on a local model: ~179 tok/call on the demo, ~424 on realistic pages), an LLM-everywhere baseline (~4.5×), and the labor-dominates insight (§3). |
+| **Practicality** | ~1,470 lines (package, `wc -l`), stdlib SQLite, one injected-dependency seam; runs offline with one command. |
 | **Explainability** | Per-decision `reason` (under-corroborated vs. conflict) + the full audit row (§5, §6). |
 | **Data quality** | Phone/address normalization to comparable keys, demonstrated on a real address change (`SHOW-MOVE`); junk values normalize to "no match", not false agreement (§2 stage 3, §4). |
-| **Source reliability** | Four weighted sources, with live/cacheable NPI (proven live in §2, `scripts/live_npi_demo.py`) and a fixture-backed State Medical Board prototype (authoritative for license status; a best-effort corroborator for contact fields — §2); a $0 NPI check-digit pre-filter rejects malformed identifiers before any call; auto-update requires an **authoritative third source**, not the weak snippet; three-way conflict handling (§4, §2 stage 5). |
+| **Source reliability** | Four weighted sources, with live/cacheable NPI and a fixture-backed State Medical Board prototype; auto-update reached through NPI+Website+**State Medical Board**, not the weak snippet; three-way conflict handling (§4, §2 stage 5). |
 | **Human-review design** | Only conflicts + under-corroborated changes escalate (~8.3% observed) **plus a working review-queue dashboard** (§6). |
 | **Audit trail** | One SQLite row per decision, every update traceable to sources + weights + freshness + score + gated-call cost (§5). |
 
-**Bonus items addressed:** working prototype (98 tests), agent workflow diagram (§2),
-cost-per-1k estimate (§3), confidence scoring formula (§4), **human-review dashboard**
-(`make_review_queue.py`, §6), address normalization strategy (§2/§8, demonstrated in §6), NPI
-Registry lookup + is_active (§2), **NPI validation** (CMS check digit, `validate_npi`, §2),
-**duplicate detection** (`dedupe.py` + `scripts/duplicate_report.py`, §6), practice-location
-matching (normalized address key), provider-movement detection (the `SHOW-MOVE` address change),
-inactive-provider detection (is_active flip), change history and audit log (§5), safe auto-update
-rules (§4), implementation roadmap (§8). Survivorship rules and practice-level (multi-location)
-dedup are described as near-term roadmap items (§8), not claimed as built.
+**Bonus items addressed:** working prototype (110 tests), agent workflow diagram (§2),
+cost-per-1k estimate (§3; per-call token constant sanity-checked on a local model), confidence scoring
+formula (§4), **human-review dashboard** (`make_review_queue.py`, §6), **duplicate detection**
+(`dataquality.find_duplicate_clusters`, §2), **NPI validation** (check-digit Luhn,
+`dataquality.validate_npi`, §2), address normalization strategy (§2/§8, demonstrated in §6), NPI
+Registry lookup + is_active (§2), practice-location matching (normalized address key),
+provider-movement detection (the `SHOW-MOVE` address change), inactive-provider detection
+(is_active flip), change history and audit log (§5), safe auto-update rules (§4), implementation
+roadmap (§8). Every Bonus-Points item in the brief is addressed — NPI validation, duplicate
+detection, the confidence formula, the human-review dashboard, the audit trail, and the
+deterministic is_active/no_change paths are **built and tested**; the remaining items are
+**demonstrated** on synthetic/fixture data with the production seam designed in §8: practice-location
+matching and provider-movement detection reduce to the normalized address key and the `SHOW-MOVE`
+record (not a tested matcher over real movement), and the live source acquisition (real practice
+fetching, per-state boards) is fixture-backed.
 
 ---
 
 *Prototype: `provider_pipeline/` — run `python -m provider_pipeline.cli --fake-contacts
---show-examples` and `python -m pytest -q` (98 tests). Literal sponsor example at both
-thresholds: `python scripts/sponsor_example_demo.py`; live NPI proof: `python
-scripts/live_npi_demo.py`; duplicate detection: `python scripts/duplicate_report.py`. Cost chart
-and sensitivity table: `python scripts/make_cost_chart.py`; review queue: `python
-scripts/make_review_queue.py`. Full design ↔ code traceability in `README.md`.*
+--show-examples` and `python -m pytest -q` (110 tests). Cost chart and sensitivity table:
+`python scripts/make_cost_chart.py`; review queue: `python scripts/make_review_queue.py`;
+data-quality pre-pass: `python scripts/make_data_quality_report.py`; live extraction
+measurement (needs Ollama): `python scripts/measure_realistic_extraction.py`. Full
+design ↔ code traceability in `README.md`.*

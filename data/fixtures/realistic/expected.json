@@ -1,0 +1,27 @@
+{
+  "R1_naples_cardiology": {
+    "phone": "2395973344",
+    "street_number": "8821",
+    "city": "naples",
+    "state": "fl",
+    "zip": "34108",
+    "must_not_pick_phones": ["2395973300", "2395973390"]
+  },
+  "R2_bayfront_pediatrics": {
+    "phone": "7278941200",
+    "street_number": "455",
+    "city": "st petersburg",
+    "state": "fl",
+    "zip": "33701",
+    "must_not_pick_phones": ["7278941299"]
+  },
+  "R3_orlando_ortho_rebrand": {
+    "phone": "4072542500",
+    "street_number": "25",
+    "city": "orlando",
+    "state": "fl",
+    "zip": "32806",
+    "must_not_pick_phones": ["4072542599", "4072542540"],
+    "must_not_pick_street_number": "1414"
+  }
+}

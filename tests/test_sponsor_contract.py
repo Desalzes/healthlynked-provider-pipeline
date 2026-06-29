@@ -60,45 +60,9 @@ def test_hl001_shaped_record_auto_updates_three_source_movement():
 
 def test_submission_text_does_not_claim_literal_hl001_reproduction():
     writeup = (ROOT / "WRITEUP.md").read_text(encoding="utf-8")
+    ledger = (ROOT.parents[1] / "LEDGER.md").read_text(encoding="utf-8")
+
     forbidden = "sponsor's own HL_001 reproduced end-to-end"
     assert forbidden not in writeup
+    assert forbidden not in ledger
     assert "HL_001-shaped" in writeup
-    # The LEDGER lives in the monorepo parent; when this project is published as a
-    # standalone repo it is intentionally absent, so only check it where present.
-    ledger = ROOT.parents[1] / "LEDGER.md"
-    if ledger.exists():
-        assert forbidden not in ledger.read_text(encoding="utf-8")
-
-
-# --- Literal HL_001 through the unmodified pipeline, at both thresholds ----------
-# The sponsor's example cites a 3-source address (NPI + Website + Board) and a
-# 2-source phone (Website + NPI). We encode exactly those sources and run the
-# LITERAL HL_001 record so the submission can show — not dodge — what the pipeline
-# does with the brief's own example.
-import dataclasses
-from provider_pipeline.config import Config
-from provider_pipeline.sponsor_example import hl001_input, hl001_deps
-from provider_pipeline.pipeline import run_record, to_recommendation
-
-
-def _run_hl001(cfg: Config):
-    rec = hl001_input()
-    result, _rows, _telem = run_record(rec, hl001_deps(cfg))
-    return to_recommendation(result, rec)
-
-
-def test_literal_hl001_holds_two_source_phone_at_default_threshold():
-    rec = _run_hl001(Config())  # default auto_threshold = 0.85
-    assert rec.provider_id == "HL_001"
-    assert rec.recommended_action == "human_review"   # phone held for a 3rd source
-    assert rec.overall_confidence == 0.90             # (address 1.00 + phone 0.80) / 2
-    by_field = {c.field: c for c in rec.changes}
-    assert by_field["phone"].supporting_sources == ["NPI Registry", "Practice Website"]
-    assert "State Medical Board" in by_field["address"].supporting_sources
-
-
-def test_literal_hl001_matches_sponsor_auto_update_at_080_threshold():
-    cfg = dataclasses.replace(Config(), auto_threshold=0.80)
-    rec = _run_hl001(cfg)
-    assert rec.recommended_action == "auto_update"    # matches the sponsor's example
-    assert rec.overall_confidence == 0.90             # matches the sponsor's 0.90

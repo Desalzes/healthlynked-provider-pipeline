@@ -24,10 +24,30 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--live", action="store_true", help="allow live NPI + LLM calls")
     p.add_argument("--fake-contacts", action="store_true",
                    help="offline regex extractor instead of the LLM (demo/CI)")
+    p.add_argument("--data-quality", action="store_true",
+                   help="run ONLY the $0 data-quality screen (NPI check-digit validation + "
+                        "duplicate detection) over --data, write data_quality.json, and exit")
     p.add_argument("--show-examples", action="store_true")
     args = p.parse_args(argv)
 
     all_records = _load_records(args.data)
+
+    # Data-quality screen: a $0 deterministic pre-pass over the raw batch (no NPI
+    # lookup, no LLM). Runs before the staged pipeline would; here it is exposed as a
+    # standalone screen so invalid/duplicate records can be corrected up front.
+    if args.data_quality:
+        from .dataquality import data_quality_report
+        report = data_quality_report(all_records)
+        out_dir = Path(args.db).parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "data_quality.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8")
+        print(f"data-quality screen: records={report['records_total']} "
+              f"invalid_npi={report['invalid_npi_count']} "
+              f"duplicate_clusters={len(report['duplicate_clusters'])} "
+              f"duplicate_records={report['duplicate_record_count']} "
+              f"-> {out_dir / 'data_quality.json'}")
+        return 0
     # Stage 1: only records past the re-verification horizon enter the pipeline.
     records = select_stale(all_records, Config())
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)

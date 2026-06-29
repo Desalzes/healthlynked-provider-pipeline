@@ -1,0 +1,79 @@
+[
+  {
+    "provider_id": "HL-OK-1",
+    "provider_name": "Alice Nguyen, MD",
+    "npi": "1000000012",
+    "specialty": "Family Medicine",
+    "practice_name": "Gulfcoast Family Medicine",
+    "address": "10 Pine St, Naples, FL 34102",
+    "phone": "239-555-0101",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-OK-2",
+    "provider_name": "David Park, DO",
+    "npi": "2000000028",
+    "specialty": "Internal Medicine",
+    "practice_name": "Harbor Internal Medicine",
+    "address": "55 Harbor Blvd, Sarasota, FL 34236",
+    "phone": "941-555-0202",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-DUP-A",
+    "provider_name": "Maria Lopez, MD",
+    "npi": "3000000034",
+    "specialty": "Pediatrics",
+    "practice_name": "Sunrise Pediatrics",
+    "address": "300 Sun Ave, Miami, FL 33101",
+    "phone": "305-555-0303",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-DUP-B",
+    "provider_name": "M. Lopez, M.D.",
+    "npi": "3000000034",
+    "specialty": "Pediatrics",
+    "practice_name": "Sunrise Pediatrics LLC",
+    "address": "300 Sun Ave Ste 2, Miami, FL 33101",
+    "phone": "(305) 555-0303",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-DUP-C",
+    "provider_name": "Robert Chen, MD",
+    "npi": "4000000040",
+    "specialty": "Cardiology",
+    "practice_name": "Bay Cardiology",
+    "address": "200 Bay St, Tampa, FL 33602",
+    "phone": "813-555-0404",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-DUP-D",
+    "provider_name": "Robert Chen, MD",
+    "npi": "5000000054",
+    "specialty": "Cardiology",
+    "practice_name": "Bay Cardiology Associates",
+    "address": "200 Bay St, Tampa, FL 33602",
+    "phone": "813-555-9999",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  },
+  {
+    "provider_id": "HL-BAD-1",
+    "provider_name": "Susan Reed, MD",
+    "npi": "6000000061",
+    "specialty": "Ophthalmology",
+    "practice_name": "Lakeland Eye Care",
+    "address": "7 Lake Rd, Lakeland, FL 33801",
+    "phone": "863-555-0606",
+    "last_verified_date": "2023-08-01",
+    "is_active": true
+  }
+]

@@ -2,16 +2,13 @@
 
 Deterministic-first, multi-source pipeline that keeps a healthcare provider
 directory current (address + phone) with an explainable confidence score and
-per-decision cost telemetry. Kaggle submission — Track C (hybrid).
-
-- **`SUBMISSION.md`** — the condensed **Kaggle Writeup body** (a tight ~1,160-word version).
-- **`WRITEUP.md`** — the full design (~5k words), the deep dive linked from the Writeup.
+per-decision cost telemetry. Kaggle submission — Track C (hybrid). Full design:
+`WRITEUP.md`.
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/Desalzes/healthlynked-provider-pipeline
-cd healthlynked-provider-pipeline
+cd comps/provider-pipeline
 python -m venv .venv
 # activate the venv:
 #   POSIX (macOS/Linux):  source .venv/bin/activate
@@ -21,12 +18,15 @@ python -m pip install -e ".[dev]"
 python scripts/make_synthetic_data.py        # writes data/synthetic_providers.json (54 records)
 python scripts/make_bulk_fixtures.py         # writes the per-record source fixtures
 python -m provider_pipeline.cli --fake-contacts --show-examples
-python scripts/sponsor_example_demo.py       # literal HL_001 at both thresholds (0.85 / 0.80)
-python scripts/live_npi_demo.py              # live CMS NPI lookup + $0 check-digit pre-filter
-python scripts/duplicate_report.py           # $0 batch duplicate-detection pre-pass
 python scripts/make_cost_chart.py            # -> out/cost_telemetry.png, out/sensitivity.csv
 python scripts/make_review_queue.py          # -> out/review_queue.html (human-review dashboard)
-python -m pytest -q                          # 98 tests
+# $0 data-quality screen (NPI check-digit validation + duplicate detection) on the planted set:
+python -m provider_pipeline.cli --data data/dataquality_demo.json --data-quality
+# (scripts/make_data_quality_report.py writes the same out/data_quality.json with cluster members)
+python -m pytest -q                          # full test suite
+
+# optional: measure the LLM extractor on realistic practice pages (needs Ollama)
+PIPELINE_LLM_MODEL=ollama_chat/qwen2.5:3b python scripts/measure_realistic_extraction.py
 ```
 
 (The CLI must run before `make_cost_chart.py` / `make_review_queue.py` — those read the audit
@@ -54,6 +54,8 @@ See `WRITEUP.md`.
 
 | Design element (WRITEUP) | Code |
 |---|---|
+| Data-quality pre-pass: NPI validation + dedup (§2) | `provider_pipeline/dataquality.py`, `scripts/make_data_quality_report.py` |
+| Realistic-page extraction measurement (§3) | `data/fixtures/realistic/`, `scripts/measure_realistic_extraction.py` |
 | Stale selection (§2.1) | `provider_pipeline/pipeline.py::select_stale` |
 | NPI Registry lookup (§2.2) | `provider_pipeline/sources/npi.py` |
 | State Medical Board (§2.4) | `provider_pipeline/sources/board.py` |
@@ -64,8 +66,5 @@ See `WRITEUP.md`.
 | Audit log (§5) | `provider_pipeline/audit.py` |
 | Cost model (§3) | `provider_pipeline/cost.py`, `scripts/make_cost_chart.py` |
 | Review dashboard (§6) | `provider_pipeline/review_queue.py`, `scripts/make_review_queue.py` |
-| Duplicate detection (§6) | `provider_pipeline/dedupe.py`, `scripts/duplicate_report.py` |
-| NPI validation (§2) | `provider_pipeline/validate.py` (CMS check digit), wired in `sources/npi.py::validated_fetch` |
-| Sponsor HL_001 / live NPI demos | `scripts/sponsor_example_demo.py`, `scripts/live_npi_demo.py` |
 
 MIT licensed.
